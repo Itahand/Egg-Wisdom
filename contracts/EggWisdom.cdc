@@ -15,6 +15,7 @@ import "FlowToken"
 import "NonFungibleToken"
 import "ViewResolver"
 import "MetadataViews"
+import "Zen"
 
 access(all)
 contract EggWisdom: NonFungibleToken, ViewResolver {
@@ -24,6 +25,8 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     // -----------------------------------------------------------------------
     // Dictionary to hold general collection information
     access(self) let collectionInfo: {String: AnyStruct}  
+    // Dictionary of phrases mapped to their totalSupply
+    access(self) let phrases: {String: UInt64}
     // Track of total supply of EggWisdom NFTs (goes up with minting)
     access(all) var totalSupply: UInt64
     // Track of total number of EggWisdom phrases
@@ -41,7 +44,9 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     // -----------------------------------------------------------------------
 	access(all) let CollectionStoragePath: StoragePath
 	access(all) let CollectionPublicPath: PublicPath
-
+	access(all) let CollectionPrivatePath: PrivatePath
+	access(all) let AdministratorStoragePath: StoragePath
+	access(all) let PhraseStoragePath: StoragePath
     // -----------------------------------------------------------------------
     // EggWisdom contract-level Composite Type definitions
     // -----------------------------------------------------------------------
@@ -61,7 +66,7 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
         // Add new Metadata to the Storage
         access(all) fun addMetadata(newPhrase: String, newMetadata: PhraseStruct) {
             pre {
-                self.metadatas[newPhrase] != nil: "There's already a metadataStruct for the phrase: ".concat(newPhrase)
+                self.metadatas[newPhrase] == nil: "There's already a metadataStruct for the phrase: ".concat(newPhrase)
             }
             self.metadatas[newPhrase] = newMetadata
 
@@ -91,6 +96,8 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
             self.namesOnScreen = namesOnScreen
             self.catsOnScreen = catsOnScreen
             self.background = background
+            // Add phrase to the contract's mapping
+            EggWisdom.phrases[phrase] = 1
         }
     }
 
@@ -273,7 +280,34 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
             return <-EggWisdom.createEmptyCollection(nftType: Type<@EggWisdom.NFT>())
         }
     }
+    // -----------------------------------------------------------------------
+    // Egg Wisdom Administrator Resource
+    // -----------------------------------------------------------------------
+    // Admin is a special authorization resource that 
+    // allows the owner to perform important functions to modify the 
+    // various aspects of the NFTs
+    access(all) resource Admin {
 
+        // function to create a new Phrase metadata
+        access(all) 
+        fun createPhrase(
+            phrase: String,
+            base64Img: String,
+            namesOnScreen: [String],
+            catsOnScreen: [String],
+            background: String
+            ) {
+            pre {
+                EggWisdom.phrases[phrase] == nil: "There's already a phrase like: ".concat(phrase)
+            }
+            // Create metadata struct
+            let newMetadata = PhraseStruct(phrase, base64Img, namesOnScreen, catsOnScreen, background)
+            // import storage
+            let storage = EggWisdom.account.storage.borrow<&EggWisdom.PhraseStorage>(from: EggWisdom.PhraseStoragePath)!
+            // save new metadata inside the storage
+            storage.addMetadata(newPhrase: phrase, newMetadata: newMetadata)
+        }
+    }
     // -----------------------------------------------------------------------
     // EggWisdom Generic or Standard public "transaction" functions
     // -----------------------------------------------------------------------
@@ -287,13 +321,15 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     // EggWisdom Generic or Standard public "script" functions
     // -----------------------------------------------------------------------
 
+    // Public function to get all the phrases and their total editions
+    access(all) fun getPhrases(): {String: UInt64} {
+        return self.phrases
+    }
 
     // Public function to fetch a collection attribute
     access(all) fun getCollectionAttribute(key: String): AnyStruct {
 		return self.collectionInfo[key] ?? panic(key.concat(" is not an attribute in this collection."))
 	}
-
-
     /// Function that returns all the Metadata Views implemented by a Non Fungible Token
     ///
     /// @return An array of Types defining the implemented views. This value will be used by
@@ -324,7 +360,7 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
                 let media = EggWisdom.getCollectionAttribute(key: "image") as! MetadataViews.Media
                 return MetadataViews.NFTCollectionDisplay(
                     name: "EggWisdom",
-                    description: "EggWisdom and Telegram governance.",
+                    description: "EggWisdom and Zen governance.",
                     externalURL: MetadataViews.ExternalURL("https://EggWisdom.gg/"),
                     squareImage: media,
                     bannerImage: media,
@@ -337,6 +373,7 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     }
     init() {
         self.collectionInfo = {}
+        self.phrases = {}
         self.totalSupply = 0
         self.totalPhrases = 0
 
@@ -345,5 +382,21 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
         // Set the named paths
 		self.CollectionStoragePath = StoragePath(identifier: identifier)!
 		self.CollectionPublicPath = PublicPath(identifier: identifier)!
+		self.CollectionPrivatePath = PrivatePath(identifier: identifier)!
+		self.AdministratorStoragePath = StoragePath(identifier: identifier.concat("Administrator"))!
+		self.PhraseStoragePath = StoragePath(identifier: identifier.concat("PhraseStorage"))!
+
+		// Create a Administrator resource and save it to EggWisdom account storage
+		let administrator <- create Admin()
+		self.account.storage.save(<- administrator, to: self.AdministratorStoragePath)
+		// Create a phraseStorage resource and save it to EggWisdom account storage
+		let phraseStorage <- create PhraseStorage()
+		self.account.storage.save(<- phraseStorage, to: self.PhraseStoragePath)
+		// Create a Collection resource and save it to storage
+		let collection <- create Collection()
+		self.account.storage.save(<- collection, to: self.CollectionStoragePath)
+        // create a public capability for the collection
+	    let collectionCap = self.account.capabilities.storage.issue<&EggWisdom.Collection>(self.CollectionStoragePath)
+		self.account.capabilities.publish(collectionCap, at: self.CollectionPublicPath)
     }
 }
