@@ -38,6 +38,7 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     access(all) event Withdraw(id: UInt64, from: Address?)
 	access(all) event Deposit(id: UInt64, to: Address?)
     access(all) event newPhraseAdded(id: UInt64, phrase: String)
+    access(all) event PhraseMinted(id: UInt64, phrase: String, minter: Address)
 
     // -----------------------------------------------------------------------
     // EggWisdom account paths
@@ -59,18 +60,25 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
         init() {
             self.metadatas = {}
         }
-
         // Functionality around the resource
         //
-
         // Add new Metadata to the Storage
-        access(all) fun addMetadata(newPhrase: String, newMetadata: PhraseStruct) {
+        access(all) 
+        fun addMetadata(newPhrase: String, newMetadata: PhraseStruct) {
             pre {
                 self.metadatas[newPhrase] == nil: "There's already a metadataStruct for the phrase: ".concat(newPhrase)
             }
             self.metadatas[newPhrase] = newMetadata
 
             emit newPhraseAdded(id: newMetadata.id, phrase: newPhrase)
+        }
+        // Get metadata
+        access(all)
+        fun getPhrase(phrase: String): EggWisdom.PhraseStruct {
+            pre {
+                self.metadatas[phrase] != nil: "There's no phrase like: ".concat(phrase)
+            }
+            return self.metadatas[phrase]!
         }
     }
 
@@ -316,6 +324,38 @@ contract EggWisdom: NonFungibleToken, ViewResolver {
     /// and returns it to the caller so that they can own NFTs
     access(all) fun createEmptyCollection(nftType: Type): @{NonFungibleToken.Collection} {
         return <- create Collection()
+    }
+    // Mint Piece NFT
+    access(all)
+    fun mintPhrase(phraseName: String, recipient: Address, payment: @{FungibleToken.Vault}) {
+        pre {
+            EggWisdom.phrases[phraseName] != nil: "There's no phrase like: ".concat(phraseName)
+            payment.balance == 1.0: "Payment is not 1 Flow"
+        }
+        // import storage
+        let storage = EggWisdom.account.storage.borrow<&EggWisdom.PhraseStorage>(from: EggWisdom.PhraseStoragePath)!
+        // copy phrase metadata
+        let phraseStruct = storage.getPhrase(phrase: phraseName)
+        let nft <- create NFT(metadataStruct: phraseStruct, serial: 0)
+
+        emit PhraseMinted(id: nft.id, phrase: nft.metadata.phrase, minter: recipient)
+		if let recipientCollection = getAccount(recipient)
+			.capabilities.borrow<&{NonFungibleToken.Receiver}>(EggWisdom.CollectionPublicPath) 
+			{
+				recipientCollection.deposit(token: <- nft)
+		} else {
+			destroy nft
+/* 				if let storage = &Piece.nftStorage[recipient] as &{UInt64: NFT}? {
+					storage[nft.id] <-! nft
+				} else {
+					Piece.nftStorage[recipient] <-! {nft.id: <- nft}
+				} */
+		}
+        // Get contract's Vault
+		let WisdomTreasury = getAccount(EggWisdom.account.address).capabilities.borrow<&{FungibleToken.Receiver}>(/public/flowTokenReceiver)!
+        // Deposit the Flow into the account
+        WisdomTreasury.deposit(from: <- payment)
+
     }
     // -----------------------------------------------------------------------
     // EggWisdom Generic or Standard public "script" functions

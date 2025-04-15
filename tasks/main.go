@@ -31,7 +31,15 @@ func main() {
 		WithArg("catsOnScreen", `["Cat1", "Cat2"]`),
 		WithArg("background", "Twilight"),
 	)
-
+	// Fetch phrases
 	o.Script("get_all_phrases")
-
+	// Mint an NFT into Bob's account
+	o.Tx("mint_phrase",
+		WithSigner("bob"),
+		WithArg("phrase", "ALL THE ZEN"),
+	)
+	// Fetch Bob's owned NFTs
+	o.Script("get_owned_nfts",
+		WithArg("account", "bob"),
+	)
 }
